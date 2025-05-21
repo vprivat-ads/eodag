@@ -432,6 +432,10 @@ class QueryStringSearch(Search):
                     "metadata_mapping"
                 ] = product_type_metadata_mapping
 
+        # load ssl context on init (slow operation)
+        self.ssl_verify = getattr(self.config, "ssl_verify", True)
+        self.ssl_ctx = get_ssl_context(self.ssl_verify)
+
     def clear(self) -> None:
         """Clear search context"""
         super().clear()
@@ -1196,8 +1200,6 @@ class QueryStringSearch(Search):
         exception_message = prep.exception_message
         try:
             timeout = getattr(self.config, "timeout", DEFAULT_SEARCH_TIMEOUT)
-            ssl_verify = getattr(self.config, "ssl_verify", True)
-
             retry_total = getattr(self.config, "retry_total", REQ_RETRY_TOTAL)
             retry_backoff_factor = getattr(
                 self.config, "retry_backoff_factor", REQ_RETRY_BACKOFF_FACTOR
@@ -1206,7 +1208,6 @@ class QueryStringSearch(Search):
                 self.config, "retry_status_forcelist", REQ_RETRY_STATUS_FORCELIST
             )
 
-            ssl_ctx = get_ssl_context(ssl_verify)
             # auth if needed
             kwargs: dict[str, Any] = {}
             if (
@@ -1235,7 +1236,9 @@ class QueryStringSearch(Search):
                 if info_message:
                     logger.info(info_message.replace(url, req_prep.url))
                 urllib_req = Request(req_prep.url, headers=USER_AGENT)
-                urllib_response = urlopen(urllib_req, timeout=timeout, context=ssl_ctx)
+                urllib_response = urlopen(
+                    urllib_req, timeout=timeout, context=self.ssl_ctx
+                )
                 # build Response
                 adapter = HTTPAdapter()
                 response = cast(
@@ -1257,7 +1260,7 @@ class QueryStringSearch(Search):
                     url,
                     timeout=timeout,
                     headers=USER_AGENT,
-                    verify=ssl_verify,
+                    verify=self.ssl_verify,
                     **kwargs,
                 )
                 response.raise_for_status()
@@ -1347,7 +1350,6 @@ class ODataV4Search(QueryStringSearch):
 
         if getattr(self.config, "per_product_metadata_query", False):
             final_result = []
-            ssl_verify = getattr(self.config, "ssl_verify", True)
             # Query the products entity set for basic metadata about the product
             for entity in super(ODataV4Search, self).do_search(prep, **kwargs):
                 metadata_url = self.get_metadata_search_url(entity)
@@ -1357,7 +1359,7 @@ class ODataV4Search(QueryStringSearch):
                         metadata_url,
                         headers=USER_AGENT,
                         timeout=HTTP_REQ_TIMEOUT,
-                        verify=ssl_verify,
+                        verify=self.ssl_verify,
                     )
                     response.raise_for_status()
                 except requests.exceptions.Timeout as exc:
@@ -1684,7 +1686,6 @@ class PostJsonSearch(QueryStringSearch):
         info_message = prep.info_message
         exception_message = prep.exception_message
         timeout = getattr(self.config, "timeout", DEFAULT_SEARCH_TIMEOUT)
-        ssl_verify = getattr(self.config, "ssl_verify", True)
         try:
             # auth if needed
             RequestsKwargs = TypedDict(
@@ -1719,7 +1720,7 @@ class PostJsonSearch(QueryStringSearch):
                 json=prep.query_params,
                 headers=USER_AGENT,
                 timeout=timeout,
-                verify=ssl_verify,
+                verify=self.ssl_verify,
                 **kwargs,
             )
             response.raise_for_status()
